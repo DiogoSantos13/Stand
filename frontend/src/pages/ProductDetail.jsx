@@ -1,210 +1,415 @@
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+/**
+ * Shop.jsx
+ *
+ * Página da Loja:
+ * - Carrega produtos do backend (Sheety via API)
+ * - Filtra por tipo, preço, pesquisa e stock
+ * - Ordena resultados
+ * - Mostra estados de loading, erro e “sem resultados”
+ * - Mantém o layout a usar as classes do teu CSS (shop-layout, grid, card, chips, etc.)
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import api from "../api";
-import { useCart } from "../context/CartContext";
 import { useToast } from "../context/ToastContext";
+import { useCart } from "../context/CartContext";
 import { useFavorites } from "../context/FavoritesContext";
-import { useAuth } from "../context/AuthContext";
 
-function ProductDetail() {
-  const { id } = useParams();
-  const [product, setProduct] = useState(null);
-  const [loadingProduct, setLoadingProduct] = useState(true);
+const TIPOS = [
+  { value: "todos", label: "Tudo" },
+  { value: "carro", label: "Carros" },
+  { value: "mota", label: "Motas" },
+  { value: "pecas", label: "Peças" },
+  { value: "acessorios", label: "Acessórios" }
+];
 
-  const [comments, setComments] = useState([]);
-  const [loadingComments, setLoadingComments] = useState(true);
-  const [commentText, setCommentText] = useState("");
+const ORDER_FIELDS = [
+  { value: "nome", label: "Nome" },
+  { value: "preco", label: "Preço" },
+  { value: "stock", label: "Stock" }
+];
 
-  const { addToCart } = useCart();
+const ORDER_DIR = [
+  { value: "asc", label: "Asc" },
+  { value: "desc", label: "Desc" }
+];
+
+function FilterChip({ active, children, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`chip ${active ? "chip-active" : ""}`}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Shop() {
   const { showToast } = useToast();
+  const { addToCart } = useCart();
   const { isFavorite, toggleFavorite } = useFavorites();
-  const { user } = useAuth();
 
-  useEffect(() => {
-    const loadProduct = async () => {
-      try {
-        const res = await api.get(`/products/${id}`);
-        setProduct(res.data);
-      } catch {
-        setProduct(null);
-      } finally {
-        setLoadingProduct(false);
-      }
-    };
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-    const loadComments = async () => {
-      try {
-        const res = await api.get(`/products/${id}/comments`);
-        setComments(res.data);
-      } catch {
-        setComments([]);
-      } finally {
-        setLoadingComments(false);
-      }
-    };
+  const [products, setProducts] = useState([]);
 
-    loadProduct();
-    loadComments();
-  }, [id]);
+  const [tipo, setTipo] = useState("todos");
+  const [search, setSearch] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [inStock, setInStock] = useState(false);
 
-  const handleAdd = () => {
-    addToCart(product);
-    showToast("Produto adicionado ao carrinho");
-  };
+  const [orderField, setOrderField] = useState("nome");
+  const [orderDir, setOrderDir] = useState("asc");
 
-  const handleFavorite = () => {
-    const wasFavorite = isFavorite(product.id);
-    toggleFavorite(product);
-    showToast(
-      wasFavorite ? "Removido dos favoritos" : "Adicionado aos favoritos"
-    );
-  };
+  const lastQueryRef = useRef("");
 
-  const handleSubmitComment = async e => {
-    e.preventDefault();
-    if (!user) {
-      showToast("Tens de fazer login para comentar", "error");
+  function validatePriceRange() {
+    const min = minPrice === "" ? null : Number(minPrice);
+    const max = maxPrice === "" ? null : Number(maxPrice);
+
+    if (min !== null && Number.isNaN(min)) return "Preço mínimo inválido.";
+    if (max !== null && Number.isNaN(max)) return "Preço máximo inválido.";
+    if (min !== null && max !== null && min > max) return "O mínimo não pode ser maior do que o máximo.";
+    return "";
+  }
+
+  function resetFilters() {
+    setTipo("todos");
+    setSearch("");
+    setMinPrice("");
+    setMaxPrice("");
+    setInStock(false);
+    setOrderField("nome");
+    setOrderDir("asc");
+    showToast("Filtros limpos");
+  }
+
+  async function loadProducts({ silent = false } = {}) {
+    const priceError = validatePriceRange();
+    if (priceError) {
+      setError(priceError);
+      if (!silent) showToast(priceError, "error");
       return;
     }
-    if (!commentText.trim()) return;
+
+    const signature = JSON.stringify({
+      tipo,
+      search: search.trim(),
+      minPrice: minPrice.trim(),
+      maxPrice: maxPrice.trim(),
+      inStock
+    });
+
+    if (signature === lastQueryRef.current && !silent) return;
+    lastQueryRef.current = signature;
+
+    setError("");
+    setLoading(true);
 
     try {
-      const res = await api.post(`/products/${id}/comments`, {
-        message: commentText
+      const res = await api.get("/products", {
+        params: {
+          tipo,
+          search: search.trim() || undefined,
+          minPrice: minPrice.trim() || undefined,
+          maxPrice: maxPrice.trim() || undefined,
+          inStock: inStock ? "1" : undefined
+        }
       });
-      setComments(prev => [res.data, ...prev]);
-      setCommentText("");
-      showToast("Comentário publicado");
+
+      setProducts(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
-      const msg = err.response?.data?.message || "Erro ao publicar comentário";
+      const msg = err.response?.data?.message || "Erro ao carregar produtos.";
+      setProducts([]);
+      setError(msg);
       showToast(msg, "error");
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
-  if (loadingProduct) return <main className="app-main">A carregar produto...</main>;
-  if (!product) return <main className="app-main">Produto não encontrado.</main>;
+  useEffect(() => {
+    loadProducts({ silent: true });
+  }, []);
 
-  const tipoLabel =
-    product.tipo === "mota"
-      ? "Mota"
-      : product.tipo === "carro"
-      ? "Carro"
-      : "Peça";
+  const sortedProducts = useMemo(() => {
+    const list = [...products];
+    const dir = orderDir === "asc" ? 1 : -1;
+
+    list.sort((a, b) => {
+      if (orderField === "preco") return (Number(a.preco) - Number(b.preco)) * dir;
+      if (orderField === "stock") return (Number(a.stock) - Number(b.stock)) * dir;
+
+      const an = String(a.nome || "").toLowerCase();
+      const bn = String(b.nome || "").toLowerCase();
+      if (an < bn) return -1 * dir;
+      if (an > bn) return 1 * dir;
+      return 0;
+    });
+
+    return list;
+  }, [products, orderField, orderDir]);
+
+  const activeTags = useMemo(() => {
+    const tags = [];
+    if (tipo !== "todos") tags.push(`Tipo: ${TIPOS.find(t => t.value === tipo)?.label || tipo}`);
+    if (search.trim()) tags.push(`Pesquisa: "${search.trim()}"`);
+    if (minPrice.trim()) tags.push(`Min: ${minPrice.trim()}€`);
+    if (maxPrice.trim()) tags.push(`Max: ${maxPrice.trim()}€`);
+    if (inStock) tags.push("Só em stock");
+    return tags;
+  }, [tipo, search, minPrice, maxPrice, inStock]);
+
+  function handleAddToCart(product) {
+    const stock = Number(product.stock) || 0;
+    if (stock <= 0) {
+      showToast("Produto esgotado", "error");
+      return;
+    }
+    addToCart(product);
+    showToast("Produto adicionado ao carrinho");
+  }
+
+  function handleToggleFavorite(product) {
+    const wasFav = isFavorite(product.id);
+    toggleFavorite(product);
+    showToast(wasFav ? "Removido dos favoritos" : "Adicionado aos favoritos");
+  }
+
+  function onSearchKeyDown(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      loadProducts();
+    }
+  }
 
   return (
     <main className="app-main">
       <div className="page-header">
         <div>
-          <h2 className="page-title">{product.nome}</h2>
+          <h2 className="page-title">Loja</h2>
           <p className="page-subtitle">
-            {tipoLabel} · {product.categoria}
+            Explora motas, carros, peças e acessórios, com filtros à tua medida.
           </p>
         </div>
       </div>
 
-      <div className="section-split" style={{ marginBottom: "2rem" }}>
-        <div className="section-card">
-          <img
-            src={product.imagemUrl}
-            alt={product.nome}
-            style={{
-              width: "100%",
-              maxHeight: 430,
-              objectFit: "cover",
-              borderRadius: "1rem"
-            }}
-          />
-        </div>
-        <div className="section-card">
-          <p style={{ marginTop: 0 }}>{product.descricao}</p>
-          <p style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}>
-            Stock:{" "}
-            <span className="badge-small">
-              {product.stock > 0 ? `${product.stock} unidade(s)` : "Indisponível"}
-            </span>
-          </p>
-          <h3 style={{ marginTop: "1.5rem", fontSize: "1.4rem" }}>
-            {product.preco.toFixed(2)} €
-          </h3>
-          <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
-            <button className="button button-primary" onClick={handleAdd}>
-              Adicionar ao carrinho
-            </button>
-            <button className="button button-secondary" onClick={handleFavorite}>
-              {isFavorite(product.id)
-                ? "Remover dos favoritos"
-                : "Adicionar aos favoritos"}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <section className="home-section">
-        <div className="home-section-header">
-          <div>
-            <div className="home-section-title">Comentários</div>
-            <div className="home-section-subtitle">
-              Partilha a tua opinião sobre este produto.
+      <div className="shop-layout">
+        {/* SIDEBAR */}
+        <aside className="shop-sidebar">
+          <div className="section-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem" }}>
+              <div className="shop-sidebar-title">Filtros</div>
+              <button type="button" className="button button-secondary" onClick={resetFilters}>
+                Limpar
+              </button>
             </div>
-          </div>
-        </div>
-        <div className="section-card" style={{ maxWidth: 700 }}>
-          {user ? (
-            <form
-              onSubmit={handleSubmitComment}
-              style={{ marginBottom: "1rem" }}
-            >
-              <div className="form-group">
-                <label>Deixa o teu comentário</label>
+
+            <div className="shop-sidebar-group" style={{ marginTop: "1rem" }}>
+              <div className="shop-sidebar-label">Tipo de produto</div>
+              <div className="chips chips-vertical" style={{ marginTop: "0.5rem" }}>
+                {TIPOS.map(t => (
+                  <FilterChip key={t.value} active={tipo === t.value} onClick={() => setTipo(t.value)}>
+                    {t.label}
+                  </FilterChip>
+                ))}
+              </div>
+            </div>
+
+            <div className="shop-sidebar-group" style={{ marginTop: "1.25rem" }}>
+              <div className="shop-sidebar-label">Intervalo de preço</div>
+              <div className="shop-price-row" style={{ marginTop: "0.5rem" }}>
                 <input
-                  value={commentText}
-                  onChange={e => setCommentText(e.target.value)}
-                  placeholder="O que achaste deste produto?"
+                  className="input-inline"
+                  placeholder="Mín"
+                  value={minPrice}
+                  onChange={e => setMinPrice(e.target.value)}
+                  inputMode="numeric"
+                />
+                <span className="shop-price-sep">–</span>
+                <input
+                  className="input-inline"
+                  placeholder="Máx"
+                  value={maxPrice}
+                  onChange={e => setMaxPrice(e.target.value)}
+                  inputMode="numeric"
                 />
               </div>
-              <button className="button button-primary" type="submit">
-                Publicar
-              </button>
-            </form>
-          ) : (
-            <p style={{ fontSize: "0.9rem", color: "#6b7280" }}>
-              Faz login para deixar um comentário.
-            </p>
-          )}
 
-          {loadingComments ? (
-            <p>A carregar comentários...</p>
-          ) : comments.length === 0 ? (
-            <p>Este produto ainda não tem comentários.</p>
-          ) : (
-            <div style={{ marginTop: "0.75rem" }}>
-              {comments.map(c => (
-                <div
-                  key={c.id}
-                  style={{
-                    padding: "0.6rem 0",
-                    borderBottom: "1px solid var(--border)"
-                  }}
-                >
-                  <div style={{ fontWeight: 600 }}>{c.authorName}</div>
-                  <div
-                    style={{
-                      fontSize: "0.75rem",
-                      color: "#6b7280",
-                      marginBottom: "0.1rem"
-                    }}
-                  >
-                    {new Date(c.createdAt).toLocaleString()}
-                  </div>
-                  <div style={{ fontSize: "0.9rem" }}>{c.message}</div>
+              {validatePriceRange() ? (
+                <div style={{ marginTop: "0.5rem", color: "#b91c1c", fontSize: "0.85rem" }}>
+                  {validatePriceRange()}
                 </div>
-              ))}
+              ) : null}
             </div>
-          )}
-        </div>
-      </section>
+
+            <div style={{ marginTop: "1rem" }}>
+              <label className="shop-checkbox">
+                <input
+                  type="checkbox"
+                  checked={inStock}
+                  onChange={e => setInStock(e.target.checked)}
+                />
+                Apenas produtos em stock
+              </label>
+            </div>
+
+            <div style={{ marginTop: "1.25rem" }}>
+              <div className="shop-sidebar-label">Ordenação</div>
+              <div className="shop-sort-row" style={{ marginTop: "0.5rem" }}>
+                <select value={orderField} onChange={e => setOrderField(e.target.value)}>
+                  {ORDER_FIELDS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+
+                <select value={orderDir} onChange={e => setOrderDir(e.target.value)}>
+                  {ORDER_DIR.map(d => (
+                    <option key={d.value} value={d.value}>{d.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="button button-primary"
+              style={{ marginTop: "1.25rem", width: "100%" }}
+              onClick={() => loadProducts()}
+              disabled={loading}
+            >
+              {loading ? "A aplicar..." : "Aplicar filtros"}
+            </button>
+          </div>
+        </aside>
+
+        {/* RESULTADOS */}
+        <section className="shop-results">
+          <div className="shop-results-header">
+            <div className="shop-search">
+              <input
+                placeholder="Pesquisar por nome, categoria ou descrição"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                onKeyDown={onSearchKeyDown}
+              />
+              <button className="button button-secondary" onClick={() => loadProducts()} disabled={loading}>
+                Pesquisar
+              </button>
+            </div>
+
+            <div className="shop-results-meta">
+              <div className="shop-results-count">
+                {loading ? "A carregar..." : `${sortedProducts.length} produto(s) encontrados.`}
+              </div>
+
+              {activeTags.length > 0 ? (
+                <div className="shop-pills">
+                  {activeTags.map(t => (
+                    <span key={t} className="shop-pill">{t}</span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {error ? (
+            <div className="section-card">
+              <div style={{ fontWeight: 700, marginBottom: "0.4rem" }}>Erro</div>
+              <div className="alert alert-error" style={{ marginBottom: 0 }}>{error}</div>
+              <button type="button" className="button button-secondary" style={{ marginTop: "1rem" }} onClick={() => loadProducts()}>
+                Tentar novamente
+              </button>
+            </div>
+          ) : null}
+
+          {!loading && !error && sortedProducts.length === 0 ? (
+            <div className="section-card shop-empty">
+              <div className="shop-empty-icon">🧾</div>
+              <div className="shop-empty-title">Nenhum produto encontrado</div>
+              <div className="shop-empty-text">
+                Ajusta os filtros ou remove o intervalo de preço para veres mais resultados.
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", gap: "0.75rem", marginTop: "1.2rem" }}>
+                <button type="button" className="button button-secondary" onClick={resetFilters}>
+                  Limpar filtros
+                </button>
+                <button type="button" className="button button-primary" onClick={() => loadProducts()}>
+                  Recarregar
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Grid */}
+          <div className="grid" style={{ opacity: loading ? 0.55 : 1 }}>
+            {sortedProducts.map(p => {
+              const esgotado = (Number(p.stock) || 0) <= 0;
+              const fav = isFavorite(p.id);
+
+              return (
+                <div key={p.id} className="card">
+                  <div className="card-img-wrapper">
+                    <span className="card-tag">
+                      {p.tipo} · {p.categoria}
+                    </span>
+                    <span className="card-price-chip">
+                      {Number(p.preco).toFixed(2)} €
+                    </span>
+                    <img
+                      src={p.imagemUrl}
+                      alt={p.nome}
+                      onError={e => {
+                        e.currentTarget.style.opacity = "0.15";
+                      }}
+                    />
+                  </div>
+
+                  <div className="card-body">
+                    <div className="card-title">{p.nome}</div>
+                    <div className="card-sub">
+                      Stock: <span className="badge-small">{esgotado ? "Esgotado" : `${p.stock} unidade(s)`}</span>
+                    </div>
+                    <div className="card-desc">{p.descricao || "—"}</div>
+
+                    <div className="card-footer-row">
+                      <Link to={`/product/${p.id}`} className="button button-secondary">
+                        Ver
+                      </Link>
+
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        disabled={esgotado}
+                        onClick={() => handleAddToCart(p)}
+                        title={esgotado ? "Produto esgotado" : "Adicionar ao carrinho"}
+                      >
+                        {esgotado ? "Esgotado" : "Adicionar"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => handleToggleFavorite(p)}
+                        title={fav ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+                      >
+                        {fav ? "★" : "☆"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
 
-export default ProductDetail;
+export default Shop;

@@ -85,7 +85,7 @@ function Home() {
         </div>
         <div className="feature-grid">
           <div className="feature-card">
-            <div className="feature-card-title">Seleção curada</div>
+            <div className="feature-card-title">Seleção de produtos diversos</div>
             <div className="feature-card-text">
               Motas, carros e peças escolhidos para quem gosta verdadeiramente de máquinas.
             </div>
