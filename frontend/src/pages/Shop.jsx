@@ -259,22 +259,28 @@ function Shop() {
               </label>
             </div>
 
-            <div style={{ marginTop: "1.25rem" }}>
-              <div className="shop-sidebar-label">Ordenação</div>
-              <div className="shop-sort-row" style={{ marginTop: "0.5rem" }}>
-                <select value={orderField} onChange={e => setOrderField(e.target.value)}>
-                  {ORDER_FIELDS.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+            <div className="shop-sort-row" style={{ marginTop: "0.5rem" }}>
+              <select
+                className="select select-compact"
+                value={orderField}
+                onChange={e => setOrderField(e.target.value)}
+              >
+                {ORDER_FIELDS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
 
-                <select value={orderDir} onChange={e => setOrderDir(e.target.value)}>
-                  {ORDER_DIR.map(d => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
-              </div>
+              <select
+                className="select select-compact"
+                value={orderDir}
+                onChange={e => setOrderDir(e.target.value)}
+              >
+                {ORDER_DIR.map(d => (
+                  <option key={d.value} value={d.value}>{d.label}</option>
+                ))}
+              </select>
             </div>
+
 
             <button
               type="button"
